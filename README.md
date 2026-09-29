@@ -12,7 +12,7 @@ Everything here is the exact build we serve: `image-main/build.sh` refuses to bu
 
 ## Results (2026-09-28)
 
-All numbers are from the production cluster, measured on the day.
+All numbers are from the production cluster, measured on the day. Load and long-reply numbers were measured with thinking at max, the heaviest setting; the recommended client setting is high (finding 5).
 
 | What | How it was measured | Result |
 |---|---|---|
@@ -55,6 +55,17 @@ The sparse indexer's prefill workspace was sized in tokens, although its cache h
 
 On the same build within the same hour, the same 8-session load read 50.1 tok/s at a 0.84 prefix-cache hit rate and 77.6 tok/s at 0.96, only because an earlier run had left the prompts cached. Compare throughput only between runs with similar hit rates; `agent_sessions_long.py` reports the hit rate for every level.
 
+### 5. Send reasoning effort high, not max
+
+The chat template knows two efforts, `low` and `high`. Any other value, and a request that sends none, renders as `Reasoning Effort: Max`. At max the model plans a whole multi-step agent task inside its thinking before its first tool call. Measured on 2026-09-28 on the same serving stack (same vLLM build, template and drafter) with a different NVFP4 checkpoint of this model, not yet re-run on this one: one real agent request (a 34K-token agent harness prompt with 38 tools and a five-step coding task), replayed with streaming and a 12,000-token cap:
+
+| `reasoning_effort` | Thinking before the first tool call | First tool call |
+|---|---|---|
+| max | over 12,000 tokens, hit the cap still planning | none after 256 s |
+| high | 63 tokens | 16 s |
+
+In a desktop agent client the same task at max ran 11 minutes with no visible action (the server generated 15,786 tokens in the last 6 of them alone), and the client reported a dropped stream while the server was still generating. High is our standard for every client. The numbers in Results were measured at max, the heaviest setting, and the measurement tools still send max on purpose.
+
 ## Open questions
 
 - **Does patch u55222 cost throughput?** Before it, 6 comparable 8-session sweeps averaged 52.8 tok/s (50.0 to 56.6). After it, one run of 3 sweeps averaged 50.1 (45.6 / 46.7 / 59.1), 0.949x, at the same cache hit rate. The spread is far wider than the gap, the 94,933-token prompt took exactly 38.1 s with and without it, and it only changes a buffer size, so we expect noise, but we have not run a clean side-by-side (fresh boot of each, 3 sweeps each). If you run one, please share it.
@@ -94,7 +105,7 @@ Download once and copy node to node over the fast link rather than downloading f
 ```bash
 cp template/chat_template_zai0907_optout.jinja "$HF_ROOT/hub/redhat-glm53-flash-nvfp4/"
 ```
-The launcher passes it with `--chat-template` and refuses to start without it. It is Z.ai's official 09-07 template plus one explicit opt-out line: every request reasons unless it sends `"chat_template_kwargs": {"enable_thinking": false}`. With thinking on, it renders byte for byte like the official template.
+The launcher passes it with `--chat-template` and refuses to start without it. It is Z.ai's official 09-07 template plus one explicit opt-out line: every request reasons unless it sends `"chat_template_kwargs": {"enable_thinking": false}`. With thinking on, it renders byte for byte like the official template. Have your clients send `"reasoning_effort": "high"`: the template falls back to Max when a request sends nothing (finding 5).
 
 **4. Launch, workers first, head last:**
 ```bash
